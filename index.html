@@ -3,124 +3,278 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Deteksi Objek Real-Time dengan AI</title>
-    <!-- Memuat TensorFlow.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <!-- Memuat model COCO-SSD -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-    
+    <title>Asisten AI + Sensor Halangan</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
-            background-color: #f0f0f0;
+            justify-content: center;
+            min-height: 100vh;
             margin: 0;
+            background-color: #121212;
+            color: white;
+            text-align: center;
             padding: 20px;
+            cursor: pointer;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
         }
-        #container {
-            position: relative;
-            margin-top: 20px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-            border-radius: 8px;
+        h1 { font-size: 26px; color: #38bdf8; margin-bottom: 5px; pointer-events: none; }
+        p { font-size: 16px; color: #cbd5e1; margin-bottom: 20px; pointer-events: none; }
+        #status { font-size: 18px; color: #00ff00; font-weight: bold; margin-bottom: 10px; pointer-events: none; }
+        #warning-box { font-size: 22px; color: #ef4444; font-weight: bold; display: none; margin-bottom: 15px; }
+        #video-container {
+            border-radius: 12px;
             overflow: hidden;
-            background-color: #000;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            max-width: 320px;
+            width: 100%;
+            background: black;
+            position: relative;
+            pointer-events: none;
         }
-        video {
-            display: block;
-        }
-        canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
-        #status {
-            margin-top: 20px;
-            font-size: 18px;
-            font-weight: bold;
-            color: #333;
-        }
+        video { width: 100%; height: auto; display: block; }
     </style>
 </head>
 <body>
 
-    <h2>AI Object Detection (Kamera Real-Time)</h2>
-    <div id="status">Memuat model AI... Mohon tunggu.</div>
+    <h1>Asisten AI & Sensor Jarak</h1>
+    <p>Ketuk layar untuk bertanya. Sensor tembok aktif otomatis.</p>
+    
+    <div id="status">Ketuk layar untuk memulai...</div>
+    <div id="warning-box">⚠️ AWAS: Terlalu Dekat Tembok/Halangan!</div>
 
-    <div id="container">
-        <!-- Video untuk menampilkan feed kamera -->
-        <video id="webcam" autoplay muted playsinline width="640" height="480"></video>
-        <!-- Canvas untuk menggambar kotak deteksi -->
-        <canvas id="canvas" width="640" height="480"></canvas>
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline muted></video>
     </div>
 
     <script>
-        const video = document.getElementById('webcam');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
+        const encodedApiKey = "QVEuQWI4Uk42TDBsNlVjZUdydmdyQ1FsV0J1NGVhMTgwdmswYjlDTG55anNGR09XWjZrQmc="; 
+        function decodeApiKey(encodedText) {
+            try { return atob(encodedText); } catch (e) { return ""; }
+        }
+
         const statusText = document.getElementById('status');
+        const warningBox = document.getElementById('warning-box');
+        const video = document.getElementById('webcam');
+        
+        let isCameraReady = false;
+        let isProcessing = false;
+        let recognition;
+        let audioCtx;
+        let db;
 
-        // Fungsi untuk mengaktifkan kamera
-        async function setupWebcam() {
-            return new Promise((resolve, reject) => {
-                navigator.mediaDevices.getUserMedia({ video: true })
-                    .then(stream => {
-                        video.srcObject = stream;
-                        video.addEventListener('loadeddata', () => resolve(), false);
-                    })
-                    .catch(error => {
-                        statusText.innerText = "Akses kamera ditolak atau tidak ditemukan.";
-                        reject(error);
-                    });
-            });
-        }
+        // --- 1. WEB AUDIO API (EARCONS / NADA SINTETIS) ---
+        function playEarcon(type) {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
 
-        // Fungsi utama untuk mendeteksi objek
-        async function detectFrame(model) {
-            // Deteksi objek dari frame video saat ini
-            const predictions = await model.detect(video);
-            
-            // Bersihkan canvas dari frame sebelumnya
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Gambar kotak dan teks untuk setiap objek yang terdeteksi
-            predictions.forEach(prediction => {
-                const [x, y, width, height] = prediction.bbox;
-                const text = `${prediction.class} - ${Math.round(prediction.score * 100)}%`;
+            const now = audioCtx.currentTime;
 
-                // Gambar kotak (bounding box)
-                ctx.strokeStyle = '#00FF00';
-                ctx.lineWidth = 4;
-                ctx.strokeRect(x, y, width, height);
-
-                // Background untuk teks
-                ctx.fillStyle = '#00FF00';
-                ctx.fillRect(x, y, ctx.measureText(text).width + 10, 25);
-
-                // Tulis nama objek dan tingkat akurasi
-                ctx.fillStyle = '#000000';
-                ctx.font = '18px Arial';
-                ctx.fillText(text, x + 5, y + 18);
-            });
-
-            // Loop fungsi ini secara terus-menerus
-            requestAnimationFrame(() => detectFrame(model));
-        }
-
-        // Jalankan aplikasi
-        async function app() {
-            try {
-                await setupWebcam();
-                const model = await cocoSsd.load();
-                statusText.innerText = "Model siap! Arahkan kamera ke berbagai objek.";
-                detectFrame(model);
-            } catch (error) {
-                console.error("Terjadi kesalahan:", error);
+            if (type === 'start') { // Nada bip ganda saat mulai dengar
+                osc.frequency.setValueAtTime(440, now);
+                osc.frequency.setValueAtTime(880, now + 0.1);
+                gain.gain.setValueAtTime(0.1, now);
+                osc.start(now);
+                osc.stop(now + 0.2);
+            } else if (type === 'warning') { // Nada peringatan tajam
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(800, now);
+                gain.gain.setValueAtTime(0.2, now);
+                osc.start(now);
+                osc.stop(now + 0.15);
+            } else if (type === 'success') { // Nada selesai
+                osc.frequency.setValueAtTime(523.25, now);
+                gain.gain.setValueAtTime(0.1, now);
+                osc.start(now);
+                osc.stop(now + 0.3);
             }
         }
 
-        app();
+        // --- 2. INDEXEDDB (MEMORI LOKAL) ---
+        function initDB() {
+            const request = indexedDB.open("AssistantMemoryDB", 1);
+            request.onupgradeneeded = (e) => {
+                db = e.target.result;
+                if (!db.objectStoreNames.contains("history")) {
+                    db.createObjectStore("history", { keyPath: "id", autoIncrement: true });
+                }
+            };
+            request.onsuccess = (e) => { db = e.target.result; };
+        }
+
+        function saveMemory(prompt, response) {
+            if (!db) return;
+            const tx = db.transaction("history", "readwrite");
+            const store = tx.objectStore("history");
+            store.add({
+                timestamp: new Date().toISOString(),
+                userPrompt: prompt,
+                aiResponse: response
+            });
+        }
+
+        // --- 3. KAMERA & DETEKSI JARAK HALANGAN ---
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' }, audio: false
+                });
+                video.srcObject = stream;
+                await new Promise(resolve => video.onloadedmetadata = resolve);
+                isCameraReady = true;
+                statusText.innerText = "Sistem Aktif! Ketuk untuk bertanya.";
+                speak("Sistem aktif.");
+                
+                // Mulai panggil loop pendeteksi halangan
+                startObstacleDetection();
+            } catch (err) {
+                statusText.innerText = "Gagal menyalakan kamera.";
+            }
+        }
+
+        let lastWarningTime = 0;
+        function startObstacleDetection() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 160; 
+            canvas.height = 120;
+
+            setInterval(() => {
+                if (!isCameraReady) return;
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                
+                // Hitung variansi kontras piksel di area tengah (estimasi kedekatan dengan permukaan datar/tembok)
+                let totalBrightness = 0;
+                let variance = 0;
+                const data = frame.data;
+                const totalPixels = data.length / 4;
+
+                for (let i = 0; i < data.length; i += 4) {
+                    totalBrightness += (data[i] + data[i+1] + data[i+2]) / 3;
+                }
+                const avgBrightness = totalBrightness / totalPixels;
+
+                for (let i = 0; i < data.length; i += 4) {
+                    const current = (data[i] + data[i+1] + data[i+2]) / 3;
+                    variance += Math.abs(current - avgBrightness);
+                }
+                const textureScore = variance / totalPixels;
+
+                // Jika variansi tekstur sangat rendah & kamera tidak gelap total = Tembok/Halangan sangat dekat
+                if (textureScore < 12 && avgBrightness > 30) {
+                    warningBox.style.display = 'block';
+                    const now = Date.now();
+                    if (now - lastWarningTime > 400) { // Bunyi bip interval rapat
+                        playEarcon('warning');
+                        if (navigator.vibrate) navigator.vibrate(150);
+                        lastWarningTime = now;
+                    }
+                } else {
+                    warningBox.style.display = 'none';
+                }
+            }, 250); // Cek tiap 250ms
+        }
+
+        function captureImageBase64() {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL('image/jpeg', 0.8).split(',')[1]; 
+        }
+
+        function speak(text) {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'id-ID';
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        // --- 4. KIRIM GEMINI + SIMPAN KE MEMORI ---
+        async function askGeminiVision(userText) {
+            const apiKey = decodeApiKey(encodedApiKey);
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            const imageBase64 = captureImageBase64();
+
+            const systemPrompt = `Kamu adalah asisten tunanetra. Jawab pertanyaan berikut berdasarkan foto secara singkat, langsung ke intinya, tanpa format markdown.
+            Pertanyaan: "${userText}"`;
+
+            try {
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: systemPrompt },
+                                { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }
+                            ]
+                        }]
+                    })
+                });
+
+                const data = await response.json();
+                if (data.candidates && data.candidates.length > 0) {
+                    const aiReply = data.candidates[0].content.parts[0].text;
+                    playEarcon('success');
+                    speak(aiReply);
+                    
+                    // Simpan percakapan ke IndexedDB
+                    saveMemory(userText, aiReply);
+                } else {
+                    speak("Tidak terlihat jelas.");
+                }
+            } catch (error) {
+                speak("Koneksi bermasalah.");
+            } finally {
+                isProcessing = false;
+            }
+        }
+
+        // --- 5. LOGIKA MIKROFON & KETUK LAYAR ---
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.lang = 'id-ID';
+
+            recognition.onstart = () => {
+                playEarcon('start');
+                statusText.innerText = "Mendengarkan...";
+            };
+
+            recognition.onresult = async (event) => {
+                const transcript = event.results[0][0].transcript.toLowerCase();
+                statusText.innerText = "Menganalisis...";
+                await askGeminiVision(transcript);
+            };
+
+            recognition.onerror = () => { isProcessing = false; };
+        }
+
+        document.body.addEventListener('click', async () => {
+            if (isProcessing) return;
+            if (!isCameraReady) {
+                initDB();
+                await setupCamera();
+            } else {
+                try {
+                    isProcessing = true;
+                    window.speechSynthesis.cancel();
+                    recognition.start();
+                } catch (e) { isProcessing = false; }
+            }
+        });
     </script>
 </body>
 </html>
